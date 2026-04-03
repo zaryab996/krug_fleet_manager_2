@@ -1,0 +1,229 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+==========================================================================
+【AI HANDOVER NOTE】
+1. DESIGN PHILOSOPHY:
+   - Automotive Data-First: Designed for fleet management professionals who need to process large datasets efficiently. The system prioritizes data density, scanability, and operational clarity.
+   - Swiss Precision meets German Engineering: Clean grid-based layouts with strict hierarchy, inspired by Swiss typography principles and German automotive industry standards (DIN, VDA).
+   - Professional Dashboard Aesthetic: Bento-style modular surfaces with subtle physicality (rim-light on cards), ensuring visual separation between data tables, filters, and action panels.
+   - Why this approach: Fleet managers work with critical financial data (repair costs, vehicle values) and need instant visual feedback. The design reduces cognitive load through consistent spacing, clear typography hierarchy, and semantic color coding.
+
+2. TYPOGRAPHY:
+   - Inter (Sans): Chosen for its exceptional legibility at small sizes, crucial for dense data tables. Its neutral, professional character aligns with automotive industry standards. Tabular figures ensure perfect alignment in financial columns.
+   - IBM Plex Mono: Used for VIN numbers, dates, and numeric data. Its clear distinction between similar characters (0/O, 1/l/I) prevents data entry errors. Slightly condensed proportions save horizontal space in tables.
+
+3. COLOR SYSTEM:
+   - Brand Primary (Hue 220, Deep Blue): Evokes trust, precision, and automotive industry heritage (similar to Mercedes-Benz, Ford corporate blues). Maps to --primary for CTAs and --ring for focus states.
+   - Accent (Hue 160, Teal): Used for success states, data validation indicators, and secondary actions. Provides clear visual distinction from primary without competing.
+   - Semantic Colors: --destructive (Hue 10, Red-Orange) for critical alerts and high repair costs; --warning (Hue 45, Amber) for maintenance due dates; --success (Hue 150, Green) for completed inspections.
+   - Neutral Palette: Carefully calibrated grays with slight blue undertone (Hue 220) to maintain brand consistency across backgrounds, borders, and muted text.
+
+4. USAGE GUIDE:
+   - Layout: Full-width dashboard with collapsible filter sidebar (--sidebar tokens). Main content area uses Bento grid for KPI cards, data table, and detail panels.
+   - Table Design: Use --muted backgrounds for alternating rows, --border for cell separators. VIN column should use --mono font with --accent color for quick scanning.
+   - Special Effects: Apply subtle backdrop-blur to modals and popovers. Use rim-light effect (1px top border with --primary at 20% opacity) on elevated cards.
+   - Role-Based UI: Admin controls use --primary, Editor actions use --accent, Viewer mode shows read-only states with --muted-foreground.
+   - Data Visualization: Use chart tokens for repair cost trends, vehicle distribution by manufacturer, and fleet age analysis.
+==========================================================================
+*/
+
+:root {
+  /* Typography */
+  --font-sans: Inter, system-ui, -apple-system, sans-serif;
+  --font-mono: IBM Plex Mono, Consolas, monospace;
+  
+  /* Radius */
+  --radius: 0.5rem;
+
+  /* Core UI Tokens */
+  --background: oklch(0.99 0.002 220);
+  --foreground: oklch(0.15 0.01 220);
+  --card: oklch(0.98 0.003 220);
+  --card-foreground: oklch(0.15 0.01 220);
+  --popover: oklch(0.99 0.002 220);
+  --popover-foreground: oklch(0.15 0.01 220);
+  --primary: oklch(0.45 0.15 220);
+  --primary-foreground: oklch(0.98 0.003 220);
+  --secondary: oklch(0.92 0.01 220);
+  --secondary-foreground: oklch(0.20 0.01 220);
+  --muted: oklch(0.95 0.005 220);
+  --muted-foreground: oklch(0.48 0.02 220);
+  --accent: oklch(0.55 0.12 160);
+  --accent-foreground: oklch(0.98 0.003 160);
+  --destructive: oklch(0.55 0.20 10);
+  --destructive-foreground: oklch(0.98 0.003 10);
+  --border: oklch(0.88 0.01 220);
+  --input: oklch(0.88 0.01 220);
+  --ring: oklch(0.45 0.15 220);
+  
+  /* Chart Tokens */
+  --chart-1: oklch(0.50 0.15 220);
+  --chart-2: oklch(0.55 0.12 160);
+  --chart-3: oklch(0.60 0.18 280);
+  --chart-4: oklch(0.58 0.16 45);
+  --chart-5: oklch(0.52 0.14 340);
+  
+  /* Sidebar Tokens */
+  --sidebar: oklch(0.97 0.003 220);
+  --sidebar-foreground: oklch(0.20 0.01 220);
+  --sidebar-primary: oklch(0.45 0.15 220);
+  --sidebar-primary-foreground: oklch(0.98 0.003 220);
+  --sidebar-accent: oklch(0.55 0.12 160);
+  --sidebar-accent-foreground: oklch(0.98 0.003 160);
+  --sidebar-border: oklch(0.90 0.008 220);
+  --sidebar-ring: oklch(0.45 0.15 220);
+}
+
+.dark {
+  --background: oklch(0.12 0.01 220);
+  --foreground: oklch(0.92 0.005 220);
+  --card: oklch(0.15 0.012 220);
+  --card-foreground: oklch(0.92 0.005 220);
+  --popover: oklch(0.14 0.012 220);
+  --popover-foreground: oklch(0.92 0.005 220);
+  --primary: oklch(0.62 0.18 220);
+  --primary-foreground: oklch(0.12 0.01 220);
+  --secondary: oklch(0.22 0.015 220);
+  --secondary-foreground: oklch(0.88 0.005 220);
+  --muted: oklch(0.20 0.012 220);
+  --muted-foreground: oklch(0.58 0.02 220);
+  --accent: oklch(0.65 0.14 160);
+  --accent-foreground: oklch(0.12 0.01 160);
+  --destructive: oklch(0.62 0.22 10);
+  --destructive-foreground: oklch(0.95 0.005 10);
+  --border: oklch(0.25 0.015 220);
+  --input: oklch(0.25 0.015 220);
+  --ring: oklch(0.62 0.18 220);
+  
+  /* Chart Tokens */
+  --chart-1: oklch(0.60 0.18 220);
+  --chart-2: oklch(0.65 0.14 160);
+  --chart-3: oklch(0.68 0.20 280);
+  --chart-4: oklch(0.65 0.18 45);
+  --chart-5: oklch(0.62 0.16 340);
+  
+  /* Sidebar Tokens */
+  --sidebar: oklch(0.10 0.012 220);
+  --sidebar-foreground: oklch(0.88 0.005 220);
+  --sidebar-primary: oklch(0.62 0.18 220);
+  --sidebar-primary-foreground: oklch(0.12 0.01 220);
+  --sidebar-accent: oklch(0.65 0.14 160);
+  --sidebar-accent-foreground: oklch(0.12 0.01 160);
+  --sidebar-border: oklch(0.22 0.015 220);
+  --sidebar-ring: oklch(0.62 0.18 220);
+}
+
+@theme inline {
+  /* Shadcn Core Mapping */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Charts Mapping */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  /* Sidebar Mapping */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Typography */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  /* Radius */
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    @apply scroll-smooth antialiased;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+    min-height: 100dvh;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    overscroll-behavior: none;
+  }
+
+  /* Touch-freundliche Mindestgröße für alle Buttons/Links */
+  button, a, [role="button"] {
+    touch-action: manipulation;
+  }
+
+  /* Scrollbar auf Mobile ausblenden */
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Safe-Area für iPhone-Notch/Home-Indicator */
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold tracking-tight;
+  }
+
+  code, pre {
+    @apply font-mono;
+  }
+
+  ::selection {
+    @apply bg-primary/20 text-primary;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/20 rounded-full hover:bg-muted-foreground/40;
+  }
+}
