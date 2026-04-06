@@ -89,7 +89,7 @@ async function readDirEntry(entry: FileSystemDirectoryEntry, prefix = ''): Promi
 export default function FolderUploadPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { fleetData }   = useFleetStore();
+  const { fleetData, getVehicle }   = useFleetStore();
   const { addDocument, documents } = useDocsStore();
   const { addEntry: addHistory } = useVehicleHistoryStore();
   const { currentUser } = useAuthStore();
@@ -204,13 +204,27 @@ export default function FolderUploadPage() {
         try {
           const buffer   = await file.arrayBuffer();
           const docId    = generateId();
-          const mimeType = file.type || 'application/octet-stream';
+          // MIME aus Dateiname ableiten wenn Browser keinen liefert
+          const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+          const mimeFromExt: Record<string, string> = {
+            jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+            gif: 'image/gif', webp: 'image/webp', heic: 'image/heic',
+            heif: 'image/heif', bmp: 'image/bmp', tiff: 'image/tiff',
+            tif: 'image/tiff', svg: 'image/svg+xml',
+            pdf: 'application/pdf',
+          };
+          const mimeType = file.type || mimeFromExt[ext] || 'application/octet-stream';
           const fileType: DocumentFileType = mimeType.startsWith('image/') ? 'image' : 'pdf';
 
           await saveFile(docId, buffer);
 
+          // vehicleRowId aus dem Fahrzeug-Record – damit getVehicleDocs (strict) funktioniert
+          const vehicleRecord = getVehicle(group.vin);
+          const vehicleRowId  = vehicleRecord?._rowId ? String(vehicleRecord._rowId) : undefined;
+
           const doc: VehicleDocument = {
             id: docId, vehicleVin: group.vin,
+            vehicleRowId,
             label: file.name, originalFileName: file.name,
             fileType, mimeType, size: file.size,
             uploadedAt: new Date().toISOString(), storageKey: docId,

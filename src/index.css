@@ -227,3 +227,13 @@
     @apply bg-muted-foreground/20 rounded-full hover:bg-muted-foreground/40;
   }
 }
+
+/* QR Scanner Scan-Line Animation */
+@keyframes scan-line {
+  0%   { top: 8px; }
+  50%  { top: calc(100% - 8px); }
+  100% { top: 8px; }
+}
+.animate-scan-line {
+  animation: scan-line 2s ease-in-out infinite;
+}

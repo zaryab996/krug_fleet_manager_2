@@ -113,30 +113,25 @@ export function mergeRecords(
   existing: VehicleRecord[],
   incoming: VehicleRecord[]
 ): { merged: VehicleRecord[]; newColumns: string[] } {
+  // Nur aktive (nicht archivierte) Records werden gemergt.
+  // Schlüssel: VIN (bestehende Logik) – archived Records werden hier nie übergeben.
   const map = new Map<string, VehicleRecord>();
-  existing.forEach(r => map.set(r.vin, { ...r }));
+  existing.forEach(r => map.set(String(r.vin), { ...r }));
 
   const existingKeys = existing.length > 0 ? Object.keys(existing[0]) : [];
   const newColumnSet = new Set<string>();
 
   incoming.forEach(r => {
-    const existing = map.get(r.vin) ?? { vin: r.vin };
-    const merged = { ...existing };
+    const vin = String(r.vin);
+    const base = map.get(vin) ?? { vin };
+    const merged: VehicleRecord = { ...base };
     Object.entries(r).forEach(([k, v]) => {
       if (!(k in merged) || merged[k] === null || merged[k] === '') {
-        merged[k] = v;
+        (merged as Record<string, unknown>)[k] = v;
         if (!existingKeys.includes(k) && k !== 'vin') newColumnSet.add(k);
       }
     });
-    map.set(r.vin, merged);
-  });
-
-  // Neue VINs hinzufügen
-  incoming.forEach(r => {
-    if (!map.has(r.vin)) {
-      map.set(r.vin, { ...r });
-      Object.keys(r).forEach(k => { if (!existingKeys.includes(k) && k !== 'vin') newColumnSet.add(k); });
-    }
+    map.set(vin, merged);
   });
 
   return { merged: Array.from(map.values()), newColumns: Array.from(newColumnSet) };

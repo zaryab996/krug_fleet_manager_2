@@ -31,6 +31,8 @@ export interface User {
 
 export interface VehicleRecord {
   vin: string;
+  /** Eindeutige Zeilen-ID – unabhängig von VIN (kein Duplikat-Matching) */
+  _rowId?: string;
   /** Optionale Farbmarkierung (CSS-Hex oder benannte Farbe) */
   _color?: string;
   /** Archiv-Felder (soft-delete) */
@@ -65,6 +67,8 @@ export type DocumentFileType = 'pdf' | 'image';
 export interface VehicleDocument {
   id: string;
   vehicleVin: string;
+  /** _rowId des Fahrzeugs – eindeutige Bindung, unabhängig von VIN-Duplikaten */
+  vehicleRowId?: string;
   /** Vom Benutzer vergebener Name/Bezeichnung */
   label: string;
   /** Originaler Dateiname */
@@ -125,6 +129,8 @@ export interface UserDocPermission {
   canImport: boolean;
   /** Darf Massenupload (FolderUpload) nutzen */
   canBulkUpload: boolean;
+  /** Sichtbare Dokument-Labels (leer = alle). Für PDF-Typen: Kalkulation, Prüfgutachten, Restwert */
+  visibleDocLabels?: string[];
   /** Dashboard: sichtbar */
   canViewDashboard: boolean;
   /** Dashboard: eigenes Layout ändern */

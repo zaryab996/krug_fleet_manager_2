@@ -63,6 +63,15 @@ function isElectric(record: VehicleRecord): boolean {
   );
 }
 
+/** Hochvoltfahrzeug: Motorart/Engine type === "EV" (case-insensitive) */
+function isEVehicle(record: VehicleRecord): boolean {
+  const motorKeys = ['Motorart', 'Engine type', 'engine type', 'motorart', 'Motor', 'Antrieb', 'Fuel type'];
+  return motorKeys.some(k => {
+    const v = record[k];
+    return typeof v === 'string' && v.trim().toUpperCase() === 'EV';
+  });
+}
+
 function exportToExcel(records: VehicleRecord[], filename = 'fahrzeugdaten.xlsx'): void {
   if (records.length === 0) return;
   const headers = Object.keys(records[0]);
@@ -294,6 +303,7 @@ export default function VehiclesPage() {
   const totalPages = pageSize === 0 ? 1 : Math.ceil(filtered.length / PAGE_SIZE);
   const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const electricCount = useMemo(() => records.filter(isElectric).length, [records]);
+  const evCount       = useMemo(() => filtered.filter(isEVehicle).length, [filtered]);
 
   // Hilfsfunktion: Marktwert und Reparaturkosten aus Record lesen
   const getMvRc = (r: VehicleRecord) => ({
@@ -491,6 +501,22 @@ export default function VehiclesPage() {
         </div>
       )}
 
+      {/* ── EV Hochvolt-Banner ── */}
+      {evCount > 0 && (
+        <div className="px-4 md:px-6 py-2.5 border-b border-yellow-300 bg-yellow-400 flex items-center gap-3">
+          <span className="flex items-center gap-2 font-bold text-yellow-900 text-sm">
+            <Zap className="w-4 h-4 fill-yellow-900 shrink-0" />
+            ⚠ Hochvoltfahrzeuge in dieser Liste:
+            <span className="bg-yellow-900 text-yellow-100 font-mono text-sm font-bold px-2 py-0.5 rounded-md ml-1">
+              {evCount}
+            </span>
+          </span>
+          <span className="text-yellow-800 text-xs hidden md:inline">
+            Fahrzeuge mit Motorart „EV" – Hochvoltsystem vorhanden. Nur durch geschultes Fachpersonal bearbeiten.
+          </span>
+        </div>
+      )}
+
       {/* Automatische Farb-Legende: Rot + Grün + Gelb-Reparaturfall + Gesamtzahl */}
       {(underwaterCount > 0 || repairableCount > 0 || electricRepairableCount > 0 || withRepairCostCount > 0) && records.length > 0 && (
         <div className="px-6 py-2 border-b border-border bg-muted/10 flex flex-wrap items-center gap-x-6 gap-y-1.5">
@@ -619,6 +645,7 @@ export default function VehiclesPage() {
             <div className="divide-y divide-border">
               {paged.map((record) => {
                 const electric = isElectric(record);
+                const isEV     = isEVehicle(record);
                 const rowColor = record._color as string | undefined;
                 const vin = String(record.vin);
                 const isSelected = selected.has(vin);
@@ -742,6 +769,7 @@ export default function VehiclesPage() {
             <tbody>
               {paged.map((record, idx) => {
                 const electric = isElectric(record);
+                const isEV     = isEVehicle(record);
                 const rowColor = record._color as string | undefined;
                 const vin = String(record.vin);
                 const isSelected = selected.has(vin);
@@ -760,7 +788,7 @@ export default function VehiclesPage() {
                       ? ''
                       : isRepairable
                         ? ''
-                        : electric ? 'bg-yellow-50/70 hover:bg-yellow-200/70' : 'hover:bg-primary/5';
+                        : isEV ? 'bg-yellow-100 hover:bg-yellow-200' : electric ? 'bg-yellow-50/70 hover:bg-yellow-200/70' : 'hover:bg-primary/5';
 
                 const autoStyle: React.CSSProperties | undefined =
                   !isSelected && !rowColor && isUnderwater
@@ -771,7 +799,9 @@ export default function VehiclesPage() {
                         ? { backgroundColor: rowColor, borderLeft: `3px solid ${rowColor.slice(0, 7)}` }
                         : isSelected
                           ? { borderLeft: '3px solid var(--primary)' }
-                          : undefined;
+                          : isEV && !rowColor && !isUnderwater && !isRepairable
+                            ? { backgroundColor: '#fef08a', borderLeft: '3px solid #eab308' }
+                            : undefined;
 
                 return (
                   <motion.tr
@@ -793,7 +823,12 @@ export default function VehiclesPage() {
                     {/* Elektro-Symbol + Mail-Badge */}
                     <td className="px-2 py-2.5 text-center w-8">
                       <div className="flex items-center justify-center gap-0.5 flex-wrap">
-                        {electric && (
+                        {isEV && (
+                          <span className="inline-flex items-center gap-0.5 bg-yellow-400 text-yellow-900 text-[10px] font-bold px-1 py-0.5 rounded leading-none">
+                            <Zap className="w-2.5 h-2.5 fill-yellow-900" />EV
+                          </span>
+                        )}
+                        {!isEV && electric && (
                           <>
                             <Zap className="w-3.5 h-3.5 fill-yellow-400 text-yellow-500 shrink-0" />
                             <AlertCircle className="w-3.5 h-3.5 fill-red-100 text-red-500 shrink-0" />
@@ -810,7 +845,12 @@ export default function VehiclesPage() {
                           <span className={`font-mono text-xs font-medium ${electric ? 'text-yellow-700' : 'text-accent'}`}>
                             {String(record[key] ?? '')}
                           </span>
-                        ) : key === 'Motorart' && electric ? (
+                        ) : (key === 'Motorart' || key === 'Engine type') && isEV ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-bold text-yellow-900 bg-yellow-400 px-2 py-0.5 rounded-full shadow-sm">
+                            <Zap className="w-3 h-3 fill-yellow-900" />
+                            EV – Hochvolt
+                          </span>
+                        ) : (key === 'Motorart' || key === 'Engine type') && electric ? (
                           <span className="inline-flex items-center gap-1 text-xs font-semibold text-yellow-700 bg-yellow-200/60 px-2 py-0.5 rounded-full">
                             <Zap className="w-3 h-3 fill-yellow-500 text-yellow-500" />
                             {String(record[key] ?? '')}
@@ -1033,7 +1073,13 @@ export default function VehiclesPage() {
             <AlertDialogFooter>
               <AlertDialogCancel>Abbrechen</AlertDialogCancel>
               <AlertDialogAction className="bg-orange-600 hover:bg-orange-500" onClick={() => {
-                archiveMultiple(Array.from(selected), currentUser?.name ?? 'Admin');
+                // _rowId-basiertes Archivieren – kein VIN-Duplikat-Matching
+                const selectedVins  = Array.from(selected);
+                const selectedRowIds = allRecords
+                  .filter(r => selected.has(String(r.vin)))
+                  .map(r => r._rowId ? String(r._rowId) : '')
+                  .filter(Boolean);
+                archiveMultiple(selectedVins, currentUser?.name ?? 'Admin', selectedRowIds.length > 0 ? selectedRowIds : undefined);
                 setSelected(new Set());
                 setConfirmBulkArchive(false);
               }}>

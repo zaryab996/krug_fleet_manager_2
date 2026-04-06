@@ -1,6 +1,7 @@
 /**
- * ArchiveView – Archivierte Fahrzeuge (Papierkorb).
- * Admins können Fahrzeuge wiederherstellen oder endgültig löschen.
+ * ArchiveView – Archivierte Fahrzeuge.
+ * Selektion, Löschen und Wiederherstellen basieren auf _rowId (nicht VIN).
+ * Kein Duplikat-Matching über VIN – jede Zeile ist eindeutig.
  */
 import { useState, useMemo } from 'react';
 import {
@@ -9,30 +10,42 @@ import {
 } from 'lucide-react';
 import { Button }   from '@/components/ui/button';
 import { Input }    from '@/components/ui/input';
-import { Badge }    from '@/components/ui/badge';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useFleetStore, useAuthStore } from '@/hooks/useStore';
+import { useFleetStore, useAuthStore, useDocsStore } from '@/hooks/useStore';
+import type { VehicleRecord } from '@/lib/types';
+
+/** Eindeutige Zeilen-Kennung: _rowId falls vorhanden, sonst Fallback-Index-String */
+function rowKey(r: VehicleRecord, idx: number): string {
+  return r._rowId ? String(r._rowId) : `fallback-${idx}`;
+}
 
 export default function ArchiveView() {
   const {
-    getArchivedVehicles, restoreVehicle, restoreMultiple,
+    fleetData,
+    restoreVehicle, restoreMultiple,
     permanentlyDelete, permanentlyDeleteMultiple,
   } = useFleetStore();
+  const { documents, deleteDocument } = useDocsStore();
   const { currentUser } = useAuthStore();
 
-  const archived    = getArchivedVehicles();
-  const [query,     setQuery]     = useState('');
-  const [selected,  setSelected]  = useState<Set<string>>(new Set());
-  const [sortKey,   setSortKey]   = useState<'vin' | '_archivedAt'>('_archivedAt');
-  const [sortDir,   setSortDir]   = useState<'asc' | 'desc'>('desc');
+  // Alle archivierten Datensätze – direkt aus fleetData (reaktiv)
+  const archived = useMemo(
+    () => fleetData.records.filter(r => r._archived === true),
+    [fleetData.records]
+  );
 
-  // Confirm dialogs
-  const [confirmRestore,  setConfirmRestore]  = useState<string[] | null>(null); // null = closed
-  const [confirmDelete,   setConfirmDelete]   = useState<string[] | null>(null);
+  const [query,    setQuery]    = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set()); // Set of _rowId
+  const [sortKey,  setSortKey]  = useState<'vin' | '_archivedAt'>('_archivedAt');
+  const [sortDir,  setSortDir]  = useState<'asc' | 'desc'>('desc');
+
+  // Confirm-Dialoge speichern [{ rowId, vin }]-Paare
+  const [confirmRestore, setConfirmRestore] = useState<{ rowId: string; vin: string }[] | null>(null);
+  const [confirmDelete,  setConfirmDelete]  = useState<{ rowId: string; vin: string }[] | null>(null);
 
   const isAdmin = currentUser?.role === 'admin';
 
@@ -43,7 +56,7 @@ export default function ArchiveView() {
         !q ||
         String(r.vin).toLowerCase().includes(q) ||
         String(r['Hersteller'] ?? '').toLowerCase().includes(q) ||
-        String(r['Haupttyp'] ?? '').toLowerCase().includes(q)
+        String(r['Haupttyp']   ?? '').toLowerCase().includes(q)
       )
       .sort((a, b) => {
         const av = String(a[sortKey] ?? '');
@@ -58,14 +71,17 @@ export default function ArchiveView() {
   }
 
   function toggleAll() {
-    if (selected.size === filtered.length) setSelected(new Set());
-    else setSelected(new Set(filtered.map(r => r.vin)));
+    if (selected.size === filtered.length && filtered.length > 0) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(filtered.map((r, i) => rowKey(r, i))));
+    }
   }
 
-  function toggleOne(vin: string) {
+  function toggleOne(key: string) {
     setSelected(s => {
       const n = new Set(s);
-      n.has(vin) ? n.delete(vin) : n.add(vin);
+      n.has(key) ? n.delete(key) : n.add(key);
       return n;
     });
   }
@@ -73,8 +89,54 @@ export default function ArchiveView() {
   function SortIcon({ k }: { k: typeof sortKey }) {
     if (sortKey !== k) return null;
     return sortDir === 'asc'
-      ? <ChevronUp className="w-3 h-3 inline ml-0.5 text-primary" />
+      ? <ChevronUp   className="w-3 h-3 inline ml-0.5 text-primary" />
       : <ChevronDown className="w-3 h-3 inline ml-0.5 text-primary" />;
+  }
+
+  // Hilfsfunktion: aus einem Set von rowKeys die passenden Records ermitteln
+  function recordsForKeys(keys: Set<string> | string[]): { rowId: string; vin: string }[] {
+    const keySet = new Set(keys);
+    return filtered
+      .map((r, i) => ({ rowId: rowKey(r, i), vin: String(r.vin) }))
+      .filter(x => keySet.has(x.rowId));
+  }
+
+  // Wiederherstellen: nutzt vin (kein VIN-Duplikatproblem beim Restore nötig – nur Flag setzen)
+  function doRestore(items: { rowId: string; vin: string }[]) {
+    if (items.length === 1) {
+      restoreVehicle(items[0].vin);
+    } else {
+      restoreMultiple(items.map(x => x.vin));
+    }
+    setSelected(new Set());
+    setConfirmRestore(null);
+  }
+
+  // Endgültig löschen: zuerst alle Docs, dann den Record
+  function doDelete(items: { rowId: string; vin: string }[]) {
+    // 1. Alle zugehörigen Dokumente aus dem DocsStore entfernen
+    items.forEach(({ rowId, vin }) => {
+      const toDelete = documents.filter(d =>
+        // Docs mit vehicleRowId: exakt matchen
+        (d.vehicleRowId && d.vehicleRowId === rowId) ||
+        // Docs ohne vehicleRowId: über VIN (alte Einträge)
+        (!d.vehicleRowId && d.vehicleVin === vin)
+      );
+      toDelete.forEach(d => deleteDocument(d.id));
+    });
+
+    // 2. Record(s) aus Fleet-Store löschen
+    if (items.length === 1) {
+      const r = filtered.find((_r, i) => rowKey(_r, i) === items[0].rowId);
+      permanentlyDelete(items[0].vin, r?._rowId ? String(r._rowId) : undefined);
+    } else {
+      permanentlyDeleteMultiple(
+        items.map(x => x.vin),
+        items.map(x => x.rowId).filter(id => !id.startsWith('fallback-'))
+      );
+    }
+    setSelected(new Set());
+    setConfirmDelete(null);
   }
 
   if (!isAdmin) return (
@@ -116,12 +178,12 @@ export default function ArchiveView() {
         {selected.size > 0 && (
           <>
             <Button variant="outline" size="sm" className="gap-1.5 text-green-700 border-green-300 hover:bg-green-50"
-              onClick={() => setConfirmRestore(Array.from(selected))}>
+              onClick={() => setConfirmRestore(recordsForKeys(selected))}>
               <RotateCcw className="w-3.5 h-3.5" />
               {selected.size} wiederherstellen
             </Button>
             <Button variant="outline" size="sm" className="gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/5"
-              onClick={() => setConfirmDelete(Array.from(selected))}>
+              onClick={() => setConfirmDelete(recordsForKeys(selected))}>
               <Trash2 className="w-3.5 h-3.5" />
               {selected.size} endgültig löschen
             </Button>
@@ -140,7 +202,7 @@ export default function ArchiveView() {
           </p>
           <p className="text-xs text-muted-foreground mt-1">
             {archived.length === 0
-              ? 'Gelöschte Fahrzeuge erscheinen hier und können wiederhergestellt werden.'
+              ? 'Ins Archiv verschobene Fahrzeuge erscheinen hier.'
               : 'Suchbegriff anpassen oder Filter leeren.'
             }
           </p>
@@ -158,7 +220,7 @@ export default function ArchiveView() {
                     <button onClick={toggleAll}>
                       {selected.size === filtered.length && filtered.length > 0
                         ? <CheckSquare className="w-4 h-4 text-primary" />
-                        : <Square className="w-4 h-4 text-muted-foreground" />
+                        : <Square      className="w-4 h-4 text-muted-foreground" />
                       }
                     </button>
                   </th>
@@ -181,19 +243,25 @@ export default function ArchiveView() {
               </thead>
               <tbody>
                 {filtered.map((r, i) => {
-                  const isSelected = selected.has(r.vin);
+                  const rKey       = rowKey(r, i);
+                  const isSelected = selected.has(rKey);
                   const archivedAt = r._archivedAt
-                    ? new Date(String(r._archivedAt)).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                    ? new Date(String(r._archivedAt)).toLocaleDateString('de-DE', {
+                        day: '2-digit', month: '2-digit', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit'
+                      })
                     : '–';
                   return (
-                    <tr key={r.vin}
-                      className={`border-b border-border last:border-0 transition-colors ${isSelected ? 'bg-primary/5' : i % 2 === 0 ? 'bg-background' : 'bg-muted/20'} hover:bg-muted/40`}
+                    <tr key={rKey}
+                      className={`border-b border-border last:border-0 transition-colors ${
+                        isSelected ? 'bg-primary/5' : i % 2 === 0 ? 'bg-background' : 'bg-muted/20'
+                      } hover:bg-muted/40`}
                     >
                       <td className="px-3 py-2.5">
-                        <button onClick={() => toggleOne(r.vin)}>
+                        <button onClick={() => toggleOne(rKey)}>
                           {isSelected
                             ? <CheckSquare className="w-4 h-4 text-primary" />
-                            : <Square className="w-4 h-4 text-muted-foreground" />
+                            : <Square      className="w-4 h-4 text-muted-foreground" />
                           }
                         </button>
                       </td>
@@ -210,12 +278,12 @@ export default function ArchiveView() {
                         <div className="flex items-center justify-end gap-1.5">
                           <Button variant="outline" size="sm"
                             className="h-7 text-xs gap-1 text-green-700 border-green-300 hover:bg-green-50"
-                            onClick={() => setConfirmRestore([r.vin])}>
+                            onClick={() => setConfirmRestore([{ rowId: rKey, vin: String(r.vin) }])}>
                             <RotateCcw className="w-3 h-3" /> Wiederherstellen
                           </Button>
                           <Button variant="ghost" size="sm"
                             className="h-7 text-xs text-destructive hover:bg-destructive/10"
-                            onClick={() => setConfirmDelete([r.vin])}>
+                            onClick={() => setConfirmDelete([{ rowId: rKey, vin: String(r.vin) }])}>
                             <Trash2 className="w-3 h-3" />
                           </Button>
                         </div>
@@ -239,7 +307,7 @@ export default function ArchiveView() {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {(confirmRestore?.length ?? 0) === 1
-                ? `VIN ${confirmRestore?.[0]} wird ins Live-System zurückgesetzt.`
+                ? `VIN ${confirmRestore?.[0].vin} wird ins Live-System zurückgesetzt.`
                 : `${confirmRestore?.length} Fahrzeuge werden ins Live-System zurückgesetzt.`
               }
               {' '}Alle Daten und Dokumente bleiben erhalten.
@@ -247,14 +315,8 @@ export default function ArchiveView() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-            <AlertDialogAction className="bg-green-600 hover:bg-green-500" onClick={() => {
-              if (!confirmRestore) return;
-              confirmRestore.length === 1
-                ? restoreVehicle(confirmRestore[0])
-                : restoreMultiple(confirmRestore);
-              setSelected(new Set());
-              setConfirmRestore(null);
-            }}>
+            <AlertDialogAction className="bg-green-600 hover:bg-green-500"
+              onClick={() => confirmRestore && doRestore(confirmRestore)}>
               Wiederherstellen
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -271,23 +333,17 @@ export default function ArchiveView() {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {(confirmDelete?.length ?? 0) === 1
-                ? `VIN ${confirmDelete?.[0]} wird permanent gelöscht.`
+                ? `VIN ${confirmDelete?.[0].vin} wird permanent gelöscht.`
                 : `${confirmDelete?.length} Fahrzeuge werden permanent gelöscht.`
               }
               {' '}<strong className="text-foreground">Diese Aktion kann nicht rückgängig gemacht werden.</strong>
-              {' '}Alle zugehörigen Dokumente und Daten gehen verloren.
+              {' '}Alle zugehörigen Daten gehen unwiderruflich verloren.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive hover:bg-destructive/90" onClick={() => {
-              if (!confirmDelete) return;
-              confirmDelete.length === 1
-                ? permanentlyDelete(confirmDelete[0])
-                : permanentlyDeleteMultiple(confirmDelete);
-              setSelected(new Set());
-              setConfirmDelete(null);
-            }}>
+            <AlertDialogAction className="bg-destructive hover:bg-destructive/90"
+              onClick={() => confirmDelete && doDelete(confirmDelete)}>
               Endgültig löschen
             </AlertDialogAction>
           </AlertDialogFooter>

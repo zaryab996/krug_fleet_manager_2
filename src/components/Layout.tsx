@@ -3,7 +3,7 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Car, Users, Upload, LogOut, Menu, X,
-  ChevronRight, Shield, Languages, FolderUp, Archive, PlusCircle, LayoutDashboard
+  ChevronRight, Shield, Languages, FolderUp, Archive, PlusCircle, LayoutDashboard, ScanQrCode
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -12,6 +12,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useAuthStore, useBackupStore, useDocPermStore, useFleetStore } from '@/hooks/useStore';
+import QRScannerDialog from '@/components/QRScannerDialog';
 import NewVehicleDialog from '@/components/NewVehicleDialog';
 import ArchiveView      from '@/components/ArchiveView';
 import { ROUTE_PATHS } from '@/lib/index';
@@ -68,6 +69,7 @@ export default function Layout({ children }: LayoutProps) {
 
   const [showNewVehicle, setShowNewVehicle] = React.useState(false);
   const [showArchive,    setShowArchive]    = React.useState(false);
+  const [showScanner,    setShowScanner]    = React.useState(false);
 
   const navItems = [
     { to: ROUTE_PATHS.VEHICLES,      label: t('nav.vehicles'),   icon: Car,         visible: true },
@@ -182,6 +184,11 @@ export default function Layout({ children }: LayoutProps) {
                       <ChevronRight className="w-4 h-4 ml-auto opacity-40" />
                     </NavLink>
                   ))}
+                  <button onClick={() => { setShowScanner(true); setMobileMenuOpen(false); }}
+                    className="w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-sm font-medium text-primary hover:bg-sidebar-accent/20 transition-all">
+                    <ScanQrCode className="w-5 h-5 shrink-0" />
+                    QR-Code scannen
+                  </button>
                   {(isAdmin || isEditor) && (
                     <button onClick={() => { setShowNewVehicle(true); }}
                       className="w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-sm font-medium text-green-600 hover:bg-sidebar-accent/20 transition-all">
@@ -296,6 +303,16 @@ export default function Layout({ children }: LayoutProps) {
               {sidebarOpen && <ChevronRight className="w-3 h-3 ml-auto opacity-40" />}
             </NavLink>
           ))}
+
+          {/* ── QR-Code Scan ── */}
+          <button
+            onClick={() => setShowScanner(true)}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 text-sidebar-foreground hover:bg-sidebar-accent/20"
+            title="QR-Code scannen"
+          >
+            <ScanQrCode className="w-4 h-4 shrink-0 text-primary" />
+            {sidebarOpen && <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-primary font-medium">Scannen</motion.span>}
+          </button>
 
           {/* ── Fahrzeug hinzufügen (Admin + Bearbeiter) ── */}
           {(isAdmin || isEditor) && (

@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { downloadSingleAkte } from '@/lib/downloadUtils';
 import {
-  ArrowLeft, Car, Edit2, Edit3, Save, X, Trash2, AlertTriangle,
+  ArrowLeft, Folder, Car, Edit2, Edit3, Save, X, Trash2, AlertTriangle,
   Paperclip, Upload, FileText, ImageIcon, Download, Eye,
   ZoomIn, ChevronLeft, ChevronRight, Loader2, Plus, Palette,
   PackageOpen, ExternalLink, Check, History, MessageSquare,
@@ -33,6 +33,7 @@ import {
   arrayBufferToBlobUrl, arrayBufferToDataUrl, formatFileSize
 } from '@/lib/fileStorage';
 import type { VehicleDocument, VehicleRecord } from '@/lib/types';
+import { generateAndSaveVehicleQR } from '@/lib/qrCodeUtils';
 
 // ─── Farbpalette ──────────────────────────────────────────────────────
 const COLOR_PALETTE = [
@@ -50,9 +51,14 @@ const COLOR_PALETTE = [
 const CURRENCY_KEYS = [
   'reparaturkosten netto',
   'wbwert netto',
+  'marktwert netto',
   'market value excluding vat',
   'market value excl. vat',
   'market value excl vat',
+  'restwert',
+  'residual value',
+  'restwert eines fahrzeugs',
+  'residual value of a vehicle',
 ];
 function isCurrencyKey(key: string): boolean {
   return CURRENCY_KEYS.some(k => key.toLowerCase().includes(k.toLowerCase()));
@@ -220,11 +226,11 @@ function Lightbox({ images, startIndex, onClose }: LightboxProps) {
 // ─── Upload-Dialog (Multi-Datei) ───────────────────────────────────────
 interface QueuedFile { file: File; label: string; status: 'pending' | 'uploading' | 'done' | 'error'; error?: string; }
 interface UploadDialogProps {
-  vin: string; open: boolean; onClose: () => void;
+  vin: string; vehicleRowId?: string; open: boolean; onClose: () => void;
   canUploadPdf: boolean; canUploadImage: boolean;
   onUploaded?: (label: string, fileName: string, mimeType: string, size: number) => void;
 }
-function UploadDialog({ vin, open, onClose, canUploadPdf, canUploadImage, onUploaded }: UploadDialogProps) {
+function UploadDialog({ vin, vehicleRowId, open, onClose, canUploadPdf, canUploadImage, onUploaded }: UploadDialogProps) {
   const { t } = useTranslation();
   const { addDocument } = useDocsStore();
   const [queue, setQueue] = useState<QueuedFile[]>([]);
@@ -282,6 +288,7 @@ function UploadDialog({ vin, open, onClose, canUploadPdf, canUploadImage, onUplo
         await saveFile(id, await q.file.arrayBuffer());
         addDocument({
           id, vehicleVin: vin,
+          vehicleRowId: vehicleRowId ?? undefined,
           label,
           originalFileName: q.file.name,
           fileType: q.file.type === 'application/pdf' ? 'pdf' : 'image',
@@ -412,21 +419,141 @@ function useIsMobile() {
   return isMobile;
 }
 
-// ─── Dokument-Karte ────────────────────────────────────────────────────
-interface DocCardProps { doc: VehicleDocument; onPreview: () => void; onDelete: () => void; canDelete: boolean; isAdmin?: boolean; }
-function DocCard({ doc, onPreview, onDelete, canDelete, isAdmin }: DocCardProps) {
-  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+// ─── QR-Code Karte ─────────────────────────────────────────────────────────
+interface QRDocCardProps { doc: VehicleDocument; vin: string; onDelete?: () => void; canDelete?: boolean; }
+function QRDocCard({ doc, vin }: QRDocCardProps) {
+  const [blobUrl,     setBlobUrl]     = useState<string | null>(null);
+  const [loading,     setLoading]     = useState(true);
+  const [showPreview, setShowPreview] = useState(false);
+
+  const urlRef = useRef<string | null>(null);
   useEffect(() => {
-    if (doc.fileType !== 'image') return;
-    let url: string | null = null;
-    loadFile(doc.storageKey).then(buf => { if (buf) { url = arrayBufferToBlobUrl(buf, doc.mimeType); setThumbUrl(url); } });
-    return () => { if (url) URL.revokeObjectURL(url); };
-  }, [doc]);
+    setLoading(true);
+    setBlobUrl(null);
+    loadFile(doc.storageKey).then(buf => {
+      if (buf) {
+        if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+        urlRef.current = URL.createObjectURL(new Blob([buf], { type: 'image/png' }));
+        setBlobUrl(urlRef.current);
+      }
+      setLoading(false);
+    }).catch(() => setLoading(false));
+    return () => { if (urlRef.current) { URL.revokeObjectURL(urlRef.current); urlRef.current = null; } };
+  }, [doc.storageKey]);
+
+  // Download direkt über blobUrl – zuverlässiger als ArrayBuffer-Roundtrip
+  const handleDownload = () => {
+    if (!blobUrl) return;
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `QR-${vin}.png`;
+    a.style.cssText = 'position:fixed;top:-999px;left:-999px;opacity:0;';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => document.body.removeChild(a), 500);
+  };
+  const handleOpen = () => { if (blobUrl) window.open(blobUrl, '_blank'); };
+
+  return (
+    <>
+      <div className="flex flex-col border border-border rounded-xl overflow-hidden bg-card shadow-sm hover:shadow-md transition-shadow w-56">
+        <div className="relative h-52 bg-white flex items-center justify-center cursor-pointer group" onClick={() => setShowPreview(true)} title="Klicken zum Vergrößern">
+          {loading ? <Loader2 className="w-6 h-6 animate-spin text-muted-foreground/40" />
+            : blobUrl ? (
+              <>
+                <img src={blobUrl} alt={`QR ${vin}`} className="h-48 w-48 object-contain" />
+                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 flex items-center justify-center transition-all">
+                  <ZoomIn className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 drop-shadow transition-opacity" />
+                </div>
+              </>
+            ) : <p className="text-xs text-muted-foreground/50">Wird geladen…</p>}
+        </div>
+        <div className="px-3 py-2.5 border-t border-border bg-muted/30 space-y-2">
+          <p className="text-xs font-semibold truncate">QR-Code · {vin}</p>
+          <div className="flex items-center gap-1.5">
+            <Button size="sm" variant="outline" className="flex-1 h-7 text-xs gap-1" onClick={handleOpen} disabled={!blobUrl}>
+              <ExternalLink className="w-3 h-3" /> Öffnen
+            </Button>
+            <Button size="sm" variant="outline" className="flex-1 h-7 text-xs gap-1" onClick={handleDownload} disabled={!blobUrl}>
+              <Download className="w-3 h-3" /> Download
+            </Button>
+          </div>
+        </div>
+      </div>
+      {showPreview && blobUrl && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center gap-4" onClick={() => setShowPreview(false)}>
+          <div className="flex items-center gap-3" onClick={e => e.stopPropagation()}>
+            <Button variant="secondary" size="sm" className="gap-1.5" onClick={handleOpen}><ExternalLink className="w-4 h-4" /> Neuer Tab</Button>
+            <Button variant="secondary" size="sm" className="gap-1.5" onClick={handleDownload}><Download className="w-4 h-4" /> Herunterladen</Button>
+            <button onClick={() => setShowPreview(false)} className="text-white/60 hover:text-white ml-2"><X className="w-6 h-6" /></button>
+          </div>
+          <img src={blobUrl} alt={`QR ${vin}`} className="max-h-[75vh] max-w-[75vw] object-contain rounded-xl bg-white p-6 shadow-2xl" onClick={e => e.stopPropagation()} />
+          <p className="text-white/50 text-sm">{vin} · Klick außerhalb zum Schließen</p>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── Dokument-Karte ────────────────────────────────────────────────────
+interface DocCardProps { doc: VehicleDocument; onPreview: () => void; onDelete: () => void; canDelete: boolean; _isAdmin?: boolean; }
+function DocCard({ doc, onPreview, onDelete, canDelete, _isAdmin: _isAdmin }: DocCardProps) {
+  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+  const [blobUrl,  setBlobUrl]  = useState<string | null>(null);
+  const [loading,  setLoading]  = useState(true);
+  const [loadErr,  setLoadErr]  = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const blobRef = useRef<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setLoadErr(false); setThumbUrl(null); setBlobUrl(null);
+    if (blobRef.current) { URL.revokeObjectURL(blobRef.current); blobRef.current = null; }
+
+    loadFile(doc.storageKey).then(async buf => {
+      if (cancelled || !buf) { if (!buf) setLoadErr(true); setLoading(false); return; }
+      // Stable BlobURL via ref – nicht durch Cleanup invalidiert
+      const mime = doc.mimeType || 'application/octet-stream';
+      blobRef.current = URL.createObjectURL(new Blob([buf], { type: mime }));
+      if (!cancelled) setBlobUrl(blobRef.current);
+
+      if (doc.fileType === 'image') {
+        if (!cancelled) setThumbUrl(blobRef.current);
+        if (!cancelled) setLoading(false);
+      } else if (doc.fileType === 'pdf') {
+        try {
+          const pdfjsLib = await import('pdfjs-dist');
+          pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+            'pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url
+          ).toString();
+          const pdf  = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+          const page = await pdf.getPage(1);
+          const vp   = page.getViewport({ scale: 1.5 });
+          const canvas = document.createElement('canvas');
+          canvas.width = vp.width; canvas.height = vp.height;
+          const ctx = canvas.getContext('2d')!;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (page.render as any)({ canvasContext: ctx, viewport: vp }).promise;
+          if (!cancelled) setThumbUrl(canvas.toDataURL('image/jpeg', 0.9));
+        } catch (e) { console.warn('[DocCard] PDF thumb:', e); }
+        if (!cancelled) setLoading(false);
+      } else { if (!cancelled) setLoading(false); }
+    }).catch(() => { if (!cancelled) { setLoadErr(true); setLoading(false); } });
+
+    return () => { cancelled = true; };
+  }, [doc.storageKey, doc.mimeType, doc.fileType]);
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation();
     const buf = await loadFile(doc.storageKey);
-    if (buf) downloadBuffer(buf, doc.mimeType, doc.originalFileName);
+    if (!buf) return;
+    const mime = doc.mimeType || 'application/octet-stream';
+    const a = document.createElement('a');
+    a.href = `data:${mime};base64,` + btoa(Array.from(new Uint8Array(buf)).map(b => String.fromCharCode(b)).join(''));
+    a.download = doc.originalFileName;
+    a.style.cssText = 'position:fixed;top:-999px;left:-999px;opacity:0;';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => document.body.removeChild(a), 500);
   };
 
   return (
@@ -434,24 +561,51 @@ function DocCard({ doc, onPreview, onDelete, canDelete, isAdmin }: DocCardProps)
       className="group relative border border-border rounded-lg overflow-hidden bg-card hover:border-primary/40 hover:shadow-md transition-all cursor-pointer"
       onClick={onPreview}
     >
-      <div className="h-32 bg-muted/40 flex items-center justify-center relative overflow-hidden">
-        {doc.fileType === 'image' && thumbUrl ? (
-          <img src={thumbUrl} alt={doc.label} className="w-full h-full object-cover transition-transform group-hover:scale-105" />
+      <canvas ref={canvasRef} className="hidden" />
+      <div className="h-40 bg-muted/30 flex items-center justify-center relative overflow-hidden">
+        {loading ? (
+          <div className="flex flex-col items-center gap-2 text-muted-foreground/50">
+            <Loader2 className="w-6 h-6 animate-spin" />
+            <span className="text-[10px]">Vorschau…</span>
+          </div>
+        ) : thumbUrl ? (
+          // Echte Vorschau – Bild oder PDF-Seite 1
+          <img
+            src={thumbUrl}
+            alt={doc.label}
+            className="w-full h-full object-contain bg-white transition-transform group-hover:scale-105"
+          />
+        ) : loadErr ? (
+          <div className="flex flex-col items-center gap-1 text-muted-foreground/50">
+            <FileText className="w-8 h-8" />
+            <span className="text-[10px]">Nicht verfügbar</span>
+          </div>
         ) : doc.fileType === 'pdf' ? (
-          <div className="flex flex-col items-center gap-1 text-muted-foreground">
+          <div className="flex flex-col items-center gap-1">
             <FileText className="w-10 h-10 text-red-400" />
             <span className="text-xs font-medium text-red-500">PDF</span>
           </div>
-        ) : <ImageIcon className="w-10 h-10 text-muted-foreground/40" />}
+        ) : (
+          <ImageIcon className="w-10 h-10 text-muted-foreground/30" />
+        )}
 
-        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
-          <button className="bg-white/90 text-foreground rounded-full p-1.5 hover:bg-white" onClick={e => { e.stopPropagation(); onPreview(); }}>
+        {/* Hover-Aktionen */}
+        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
+          <button className="bg-white/95 text-foreground rounded-full p-2 hover:bg-white shadow-md" onClick={e => { e.stopPropagation(); onPreview(); }} title="Öffnen">
             {doc.fileType === 'pdf' ? <Eye className="w-4 h-4" /> : <ZoomIn className="w-4 h-4" />}
           </button>
-          <button className="bg-white/90 text-foreground rounded-full p-1.5 hover:bg-white" onClick={handleDownload}>
+          <button className="bg-white/95 text-foreground rounded-full p-2 hover:bg-white shadow-md" onClick={e => { e.stopPropagation(); if (blobUrl) window.open(blobUrl, '_blank'); }} title="Neuer Tab">
+            <ExternalLink className="w-4 h-4" />
+          </button>
+          <button className="bg-white/95 text-foreground rounded-full p-2 hover:bg-white shadow-md" onClick={handleDownload} title="Herunterladen">
             <Download className="w-4 h-4" />
           </button>
         </div>
+
+        {/* PDF-Label oben rechts */}
+        {doc.fileType === 'pdf' && thumbUrl && (
+          <div className="absolute top-1.5 right-1.5 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">PDF</div>
+        )}
       </div>
       <div className="px-3 py-2.5">
         <p className="text-sm font-medium text-foreground truncate" title={doc.label}>{doc.label}</p>
@@ -460,11 +614,21 @@ function DocCard({ doc, onPreview, onDelete, canDelete, isAdmin }: DocCardProps)
           <span className="text-xs text-muted-foreground">{formatFileSize(doc.size)}</span>
           <span className="text-xs text-muted-foreground">{formatDate(doc.uploadedAt)}</span>
         </div>
+        <div className="flex items-center gap-1.5 mt-2">
+          <button onClick={e => { e.stopPropagation(); onPreview(); }}
+            className="flex-1 flex items-center justify-center gap-1 text-xs py-1 rounded border border-border hover:bg-muted transition-colors">
+            <Eye className="w-3 h-3" /> Öffnen
+          </button>
+          <button onClick={handleDownload} disabled={!blobUrl}
+            className="flex-1 flex items-center justify-center gap-1 text-xs py-1 rounded border border-border hover:bg-muted transition-colors disabled:opacity-40">
+            <Download className="w-3 h-3" /> Download
+          </button>
+        </div>
       </div>
       {canDelete && (
         <button
           className={`absolute top-2 right-2 text-white rounded-full p-1 transition-all ${
-            isAdmin
+            _isAdmin
               ? 'bg-red-500/80 hover:bg-red-600 opacity-100 shadow-sm'
               : 'bg-black/50 hover:bg-red-500 opacity-0 group-hover:opacity-100'
           }`}
@@ -504,7 +668,7 @@ export default function VehicleDetailPage() {
   const accessDenied = currentUser && currentUser.role !== 'admin'
     ? !canSeeVehicle(currentUser.id, currentUser.role, decodedVin)
     : false;
-  const docs = getVehicleDocs(decodedVin);
+  const docs = getVehicleDocs(decodedVin, vehicle?._rowId ? String(vehicle._rowId) : undefined);
 
   // Sichtbare Detail-Felder für diesen Nutzer (leer = alle)
   const visibleDetailFields = userColConfig?.visibleDetailFields ?? [];
@@ -516,6 +680,7 @@ export default function VehicleDetailPage() {
   const [showDelete, setShowDelete] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+  const [activeLightboxImages, setActiveLightboxImages] = useState<typeof docs>([]);
   const [pdfDoc, setPdfDoc] = useState<VehicleDocument | null>(null);
   const [deleteDocId, setDeleteDocId] = useState<string | null>(null);
   const [deleteAllDocsConfirm, setDeleteAllDocsConfirm] = useState(false);
@@ -563,8 +728,37 @@ export default function VehicleDetailPage() {
     addHistory({ ...entry, userId: currentUser.id, userName: currentUser.name });
   };
 
-  const images = docs.filter(d => d.fileType === 'image');
-  const pdfs   = docs.filter(d => d.fileType === 'pdf');
+  const isAdmin = currentUser?.role === 'admin';
+  // Ordner-Definitionen
+  const DOC_FOLDERS = ['Kalkulation','Prüfgutachten','Restwert','Rechnung','Ankauf','Verkauf'];
+  const allowedFolders: string[] = (!isAdmin && docPerm.visibleDocLabels && docPerm.visibleDocLabels.length > 0)
+    ? docPerm.visibleDocLabels : [];
+  // Hilfsfunktion: Welchem Ordner gehört ein Dokument an?
+  const getDocFolder = (label: string): string | null => {
+    const fl = label.toLowerCase();
+    return DOC_FOLDERS.find(f => fl.includes(f.toLowerCase())) ?? null;
+  };
+  // Filtere nach freigegebenen Ordnern
+  const filteredDocs = allowedFolders.length > 0
+    ? docs.filter(d => {
+        if (d.label === 'QR-Code') return true;
+        const folder = getDocFolder(d.label);
+        return folder ? allowedFolders.some(f => f.toLowerCase() === folder.toLowerCase()) : true;
+      })
+    : docs;
+  // Ordner-Map: Ordnername → Dokumente
+  const docFolderMap = new Map<string, typeof docs>();
+  DOC_FOLDERS.forEach(f => docFolderMap.set(f, []));
+  docFolderMap.set('Sonstige', []);
+  filteredDocs.forEach(d => {
+    if (d.label === 'QR-Code' && d.fileType === 'image') return;
+    const folder = getDocFolder(d.label);
+    if (folder) docFolderMap.get(folder)!.push(d);
+    else docFolderMap.get('Sonstige')!.push(d);
+  });
+  const qrDocs = filteredDocs.filter(d => d.label === 'QR-Code' && d.fileType === 'image');
+  const images = filteredDocs.filter(d => d.fileType === 'image' && d.label !== 'QR-Code');
+  const pdfs   = filteredDocs.filter(d => d.fileType === 'pdf');
 
   useEffect(() => {
     if (vehicle) {
@@ -573,6 +767,26 @@ export default function VehicleDetailPage() {
       setEditValues(vals);
     }
   }, [vehicle]);
+
+  // ── QR-Code einmalig generieren (nur wenn noch KEINER im Store) ─────────
+  const { addDocument: addDocToStore, documents: allDocs } = useDocsStore();
+  const qrAlreadyExists = useRef(false);
+  useEffect(() => {
+    if (!vehicle || !decodedVin) return;
+    if (qrAlreadyExists.current) return;
+    const rowId = vehicle._rowId ? String(vehicle._rowId) : undefined;
+    // Prüfe im kompletten Store (nicht nur docs der aktuellen View)
+    const hasQR = allDocs.some(d =>
+      (rowId ? d.vehicleRowId === rowId : d.vehicleVin === decodedVin) &&
+      d.label === 'QR-Code' && d.fileType === 'image'
+    );
+    if (hasQR) { qrAlreadyExists.current = true; return; }
+    qrAlreadyExists.current = true; // verhindert Doppel-Generierung
+    generateAndSaveVehicleQR(decodedVin)
+      .then(({ document }) => addDocToStore({ ...document, vehicleRowId: rowId }))
+      .catch(err => console.warn('[QR] Fehler:', err));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [decodedVin, vehicle?._rowId]);
 
   if (accessDenied) {
     return (
@@ -674,7 +888,7 @@ export default function VehicleDetailPage() {
   });
   const groups = [
     { labelKey: 'vehicleDetail.groupVehicle', keys: ['Hersteller', 'Haupttyp', 'Motorart'] },
-    { labelKey: 'vehicleDetail.groupCosts',   keys: ['Reparaturkosten netto', 'WBWert netto', 'Erstzulassung', 'Besichtigung1 Datum', 'Besichtigungsort'] },
+    { labelKey: 'vehicleDetail.groupCosts',   keys: ['Reparaturkosten netto', 'WBWert netto', 'Marktwert netto', 'Market value excluding VAT', 'RW', 'Reparatur-Risiko', 'Repair-Risk', 'Restwert', 'Residual value', 'Restwert eines Fahrzeugs', 'Residual value of a vehicle', 'Restwert Datum', 'Restwert gültig bis', 'Residual value date', 'Residual value expiry', 'Restwert Ablauf', 'Erstzulassung', 'Besichtigung1 Datum', 'Besichtigungsort'] },
   ];
   const grouped = new Map<string, [string, unknown][]>();
   const ungrouped: [string, unknown][] = [];
@@ -828,8 +1042,153 @@ export default function VehicleDetailPage() {
 
         {/* ── Datenfelder ─────────────────────────────────── */}
         <div className={`grid gap-3 mb-5 ${isMobile ? "grid-cols-1" : "grid-cols-1 md:grid-cols-2 gap-4 mb-6"}`}>
-          {Array.from(grouped.entries()).map(([groupName, fields]) =>
-            fields.length > 0 && (
+          {Array.from(grouped.entries()).map(([groupName, fields]) => {
+            if (fields.length === 0) return null;
+            const isCostsGroup = groupName === 'vehicleDetail.groupCosts';
+            if (isCostsGroup) {
+              // ── Spezielles Layout für Termine & Kosten ──────────────────
+              const marketVal   = fields.find(([k]) => ['wbwert netto','marktwert netto','market value excluding vat'].includes(k.toLowerCase()));
+              const rwField     = fields.find(([k]) => k.toLowerCase() === 'rw');
+              const riskField   = fields.find(([k]) => ['reparatur-risiko','repair-risk'].includes(k.toLowerCase()));
+              const residual    = fields.find(([k]) => ['restwert','residual value','restwert eines fahrzeugs','residual value of a vehicle'].includes(k.toLowerCase()));
+              const residualDt  = fields.find(([k]) => ['restwert datum','restwert gültig bis','residual value date','residual value expiry','restwert ablauf'].includes(k.toLowerCase()));
+              const repairCost  = fields.find(([k]) => k.toLowerCase().includes('reparaturkosten'));
+              const dateFields  = fields.filter(([k]) => ['erstzulassung','besichtigung1 datum','besichtigungsort'].includes(k.toLowerCase()));
+              const restFields  = fields.filter(([k]) => {
+                const kl = k.toLowerCase();
+                return !['wbwert netto','marktwert netto','market value excluding vat','rw','reparatur-risiko','repair-risk','restwert','residual value','restwert eines fahrzeugs','residual value of a vehicle','restwert datum','restwert gültig bis','residual value date','residual value expiry','restwert ablauf','reparaturkosten netto'].includes(kl) && !['erstzulassung','besichtigung1 datum','besichtigungsort'].includes(kl);
+              });
+              return (
+                <Card key={groupName} className="border-border" style={{ borderLeft: '3px solid #f59e0b' }}>
+                  <CardHeader className="pb-2 pt-4 px-4">
+                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                      <span className="inline-block w-2 h-2 rounded-full bg-amber-500" />
+                      {t(groupName)}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-4 pb-4 space-y-4">
+
+                    {/* ── Kosten-Übersicht (Kacheln) ── */}
+                    <div className="grid grid-cols-2 gap-2">
+                      {repairCost && (
+                        <div className="rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-3 py-2.5">
+                          <p className="text-[10px] text-red-600 dark:text-red-400 font-medium uppercase tracking-wide mb-0.5">Reparaturkosten</p>
+                          {editing ? (
+                            <Input value={editValues[repairCost[0]] ?? ''} onChange={e => setEditValues(p => ({ ...p, [repairCost[0]]: e.target.value }))} className="h-7 text-sm" />
+                          ) : (
+                            <p className="text-sm font-semibold text-red-700 dark:text-red-300">{formatDisplayValue(repairCost[0], repairCost[1])}</p>
+                          )}
+                        </div>
+                      )}
+                      {marketVal && (
+                        <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-3 py-2.5">
+                          <p className="text-[10px] text-blue-600 dark:text-blue-400 font-medium uppercase tracking-wide mb-0.5">Marktwert netto</p>
+                          {editing ? (
+                            <Input value={editValues[marketVal[0]] ?? ''} onChange={e => setEditValues(p => ({ ...p, [marketVal[0]]: e.target.value }))} className="h-7 text-sm" />
+                          ) : (
+                            <p className="text-sm font-semibold text-blue-700 dark:text-blue-300">{formatDisplayValue(marketVal[0], marketVal[1])}</p>
+                          )}
+                        </div>
+                      )}
+                      {residual && (
+                        <div className="rounded-lg bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 px-3 py-2.5 col-span-2">
+                          <p className="text-[10px] text-green-600 dark:text-green-400 font-medium uppercase tracking-wide mb-1">Restwert eines Fahrzeugs</p>
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <div className="flex-1 min-w-[120px]">
+                              <p className="text-[10px] text-green-500 mb-0.5">Betrag</p>
+                              {editing ? (
+                                <Input value={editValues[residual[0]] ?? ''} onChange={e => setEditValues(p => ({ ...p, [residual[0]]: e.target.value }))} className="h-7 text-sm" placeholder="0,00 €" />
+                              ) : (
+                                <p className="text-sm font-semibold text-green-700 dark:text-green-300">{formatDisplayValue(residual[0], residual[1])}</p>
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-[120px]">
+                              <p className="text-[10px] text-green-500 mb-0.5">Gültig bis</p>
+                              {editing ? (
+                                <Input
+                                  type="date"
+                                  value={editValues[residualDt ? residualDt[0] : 'Restwert gültig bis'] ?? ''}
+                                  onChange={e => setEditValues(p => ({ ...p, [residualDt ? residualDt[0] : 'Restwert gültig bis']: e.target.value }))}
+                                  className="h-7 text-sm"
+                                />
+                              ) : (
+                                <p className="text-sm font-semibold text-green-700 dark:text-green-300">
+                                  {residualDt ? formatDisplayValue(residualDt[0], residualDt[1]) : '—'}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {rwField && (
+                        <div className="rounded-lg bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 px-3 py-2.5 flex items-center justify-between">
+                          <div>
+                            <p className="text-[10px] text-purple-600 dark:text-purple-400 font-medium uppercase tracking-wide mb-0.5">RW</p>
+                            {editing ? (
+                              <Input value={editValues[rwField[0]] ?? ''} onChange={e => setEditValues(p => ({ ...p, [rwField[0]]: e.target.value }))} className="h-7 text-sm w-20" />
+                            ) : (
+                              <p className="text-sm font-semibold text-purple-700 dark:text-purple-300">{String(rwField[1] ?? '—')}</p>
+                            )}
+                          </div>
+                          {/* Checkbox visual */}
+                          <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${String(rwField[1] ?? '').toLowerCase() === 'x' || String(rwField[1] ?? '').toLowerCase() === 'ja' ? 'bg-purple-500 border-purple-500' : 'border-purple-300'}`}>
+                            {(String(rwField[1] ?? '').toLowerCase() === 'x' || String(rwField[1] ?? '').toLowerCase() === 'ja') && (
+                              <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* ── Reparatur-Risiko ── */}
+                    {riskField && (
+                      <div className="rounded-lg border border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-950/30 px-3 py-2.5">
+                        <p className="text-[10px] text-orange-600 dark:text-orange-400 font-medium uppercase tracking-wide mb-1">Reparatur-Risiko</p>
+                        {editing ? (
+                          <Input value={editValues[riskField[0]] ?? ''} onChange={e => setEditValues(p => ({ ...p, [riskField[0]]: e.target.value }))} className="h-8 text-sm" placeholder="z. B. kein Schlüssel, Motor startet nicht" />
+                        ) : (
+                          <p className="text-sm text-orange-800 dark:text-orange-200 leading-snug">{String(riskField[1] ?? '—')}</p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ── Termine ── */}
+                    {dateFields.length > 0 && (
+                      <div>
+                        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">Termine</p>
+                        <div className="grid grid-cols-1 gap-2">
+                          {dateFields.map(([key, val]) => (
+                            <div key={key} className="flex items-center justify-between py-1.5 border-b border-border last:border-0">
+                              <span className="text-xs text-muted-foreground">{getLabel(key, key)}</span>
+                              {editing ? (
+                                <Input value={editValues[key] ?? ''} onChange={e => setEditValues(p => ({ ...p, [key]: e.target.value }))} className="h-7 text-xs w-40 text-right" />
+                              ) : (
+                                <span className="text-sm font-medium">{formatDisplayValue(key, val)}</span>
+                              )}
+                            </div>
+                          ))}
+
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── Restliche Felder der Gruppe ── */}
+                    {restFields.map(([key, val]) => (
+                      <div key={key}>
+                        <Label className="text-xs text-muted-foreground">{getLabel(key, key)}</Label>
+                        {editing ? (
+                          <Input value={editValues[key] ?? ''} onChange={e => setEditValues(p => ({ ...p, [key]: e.target.value }))} className="h-8 mt-1 text-sm" />
+                        ) : (
+                          <p className="text-sm mt-0.5 text-foreground">{formatDisplayValue(key, val)}</p>
+                        )}
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              );
+            }
+            // ── Standard-Gruppe ──────────────────────────────────────────
+            return (
               <Card key={groupName} className="border-border">
                 <CardHeader className="pb-2 pt-4 px-4">
                   <CardTitle className="text-sm text-muted-foreground font-medium">{t(groupName)}</CardTitle>
@@ -847,8 +1206,8 @@ export default function VehicleDetailPage() {
                   ))}
                 </CardContent>
               </Card>
-            )
-          )}
+            );
+          })}
           {ungrouped.length > 0 && (
             <Card className="border-border md:col-span-2">
               <CardHeader className="pb-2 pt-4 px-4">
@@ -943,37 +1302,61 @@ export default function VehicleDetailPage() {
                 {canEdit && <p className="text-xs text-muted-foreground/70 mt-1">{t('vehicleDetail.docs.emptyHint')}</p>}
               </div>
             ) : (
-              <div className="space-y-5">
-                {images.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <ImageIcon className="w-3.5 h-3.5 text-muted-foreground" />
-                      <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                        {t('vehicleDetail.docs.photos', { count: images.length })}
-                      </span>
+              <div className="space-y-2">
+                {/* QR-Code */}
+                {qrDocs.length > 0 && (
+                  <div className="border border-border rounded-xl overflow-hidden">
+                    <div className="flex items-center gap-2 px-4 py-2.5 bg-muted/30 border-b border-border">
+                      <svg className="w-3.5 h-3.5 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">QR-Code</span>
                     </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                      {images.map((doc, i) => (
-                        <DocCard key={doc.id} doc={doc} onPreview={() => setLightboxIdx(i)} onDelete={() => setDeleteDocId(doc.id)} canDelete={docPerm.canDeleteDocs} isAdmin={currentUser?.role === 'admin'} />
+                    <div className="p-3 flex flex-wrap gap-3">
+                      {qrDocs.map(doc => (
+                        <QRDocCard key={doc.id} doc={doc} vin={decodedVin} onDelete={() => setDeleteDocId(doc.id)} canDelete={docPerm.canDeleteDocs} />
                       ))}
                     </div>
                   </div>
                 )}
-                {pdfs.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <FileText className="w-3.5 h-3.5 text-muted-foreground" />
-                      <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                        {t('vehicleDetail.docs.pdfs', { count: pdfs.length })}
-                      </span>
+                {/* Ordner */}
+                {[...DOC_FOLDERS, 'Sonstige'].map(folder => {
+                  const folderDocs = docFolderMap.get(folder) ?? [];
+                  if (folderDocs.length === 0) return null;
+                  const folderPdfs = folderDocs.filter(d => d.fileType === 'pdf');
+                  const folderImgs = folderDocs.filter(d => d.fileType === 'image');
+                  const folderColors: Record<string,string> = {
+                    'Kalkulation':'border-l-blue-500','Prüfgutachten':'border-l-green-500',
+                    'Restwert':'border-l-yellow-500','Rechnung':'border-l-red-500',
+                    'Ankauf':'border-l-purple-500','Verkauf':'border-l-orange-500','Sonstige':'border-l-muted'
+                  };
+                  return (
+                    <div key={folder} className={`border border-border rounded-xl overflow-hidden border-l-4 ${folderColors[folder] ?? 'border-l-border'}`}>
+                      <div className="flex items-center gap-2 px-4 py-2.5 bg-muted/20 border-b border-border">
+                        <Folder className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span className="text-xs font-semibold text-foreground">{folder}</span>
+                        <Badge variant="secondary" className="text-[10px] font-mono ml-1">{folderDocs.length}</Badge>
+                      </div>
+                      <div className="p-3 space-y-3">
+                        {folderImgs.length > 0 && (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+                            {folderImgs.map((doc, fi) => (
+                              <DocCard key={doc.id} doc={doc}
+                                onPreview={() => { setActiveLightboxImages(folderImgs); setLightboxIdx(fi); }}
+                                onDelete={() => setDeleteDocId(doc.id)}
+                                canDelete={docPerm.canDeleteDocs} _isAdmin={isAdmin} />
+                            ))}
+                          </div>
+                        )}
+                        {folderPdfs.length > 0 && (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+                            {folderPdfs.map(doc => (
+                              <DocCard key={doc.id} doc={doc} onPreview={() => setPdfDoc(doc)} onDelete={() => setDeleteDocId(doc.id)} canDelete={docPerm.canDeleteDocs} _isAdmin={isAdmin} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                      {pdfs.map(doc => (
-                        <DocCard key={doc.id} doc={doc} onPreview={() => setPdfDoc(doc)} onDelete={() => setDeleteDocId(doc.id)} canDelete={docPerm.canDeleteDocs} isAdmin={currentUser?.role === 'admin'} />
-                      ))}
-                    </div>
-                  </div>
-                )}
+                  );
+                })}
               </div>
             )}
           </CardContent>
@@ -1663,7 +2046,7 @@ export default function VehicleDetailPage() {
       />
 
       <AnimatePresence>
-        {lightboxIdx !== null && <Lightbox images={images} startIndex={lightboxIdx} onClose={() => setLightboxIdx(null)} />}
+        {lightboxIdx !== null && <Lightbox images={activeLightboxImages.length > 0 ? activeLightboxImages : images} startIndex={lightboxIdx} onClose={() => { setLightboxIdx(null); setActiveLightboxImages([]); }} />}
         {pdfDoc && <PdfViewer doc={pdfDoc} onClose={() => setPdfDoc(null)} />}
       </AnimatePresence>
 

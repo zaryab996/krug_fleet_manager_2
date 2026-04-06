@@ -164,11 +164,11 @@ interface FleetStore {
   updateVehicle: (vin: string, changes: Partial<VehicleRecord>) => void;
   deleteVehicle: (vin: string) => void;
   archiveVehicle: (vin: string, byUserName: string) => void;
-  archiveMultiple: (vins: string[], byUserName: string) => void;
+  archiveMultiple: (vins: string[], byUserName: string, rowIds?: string[]) => void;
   restoreVehicle: (vin: string) => void;
   restoreMultiple: (vins: string[]) => void;
-  permanentlyDelete: (vin: string) => void;
-  permanentlyDeleteMultiple: (vins: string[]) => void;
+  permanentlyDelete: (vin: string, rowId?: string) => void;
+  permanentlyDeleteMultiple: (vins: string[], rowIds?: string[]) => void;
   getVehicle: (vin: string) => VehicleRecord | undefined;
   setVehicleColor: (vin: string, color: string | null) => void;
   getLiveVehicles: () => VehicleRecord[];
@@ -187,7 +187,9 @@ export const useFleetStore = create<FleetStore>()(
       // Vorschau: gibt Duplikate zurück ohne zu speichern
       previewImport: (incoming) => {
         const { fleetData } = get();
-        const existingMap = new Map(fleetData.records.map(r => [String(r.vin), r]));
+        // Nur AKTIVE (nicht archivierte) Records für Duplikatprüfung
+        const liveRecords = fleetData.records.filter(r => !r._archived);
+        const existingMap = new Map(liveRecords.map(r => [String(r.vin), r]));
         const duplicates: { incoming: VehicleRecord; existing: VehicleRecord }[] = [];
         const newRecords: VehicleRecord[] = [];
         incoming.forEach(r => {
@@ -203,15 +205,21 @@ export const useFleetStore = create<FleetStore>()(
 
       importData: (incoming, fileName) => {
         const { fleetData } = get();
-        const existingVins = new Set(fleetData.records.map(r => String(r.vin)));
-        const existingCount = fleetData.records.length;
-        const { merged, newColumns } = mergeRecords(fleetData.records, incoming);
-        const newCount = merged.length - existingCount;
+        // Archivierte Records vollständig vom Import trennen
+        const archivedRecords = fleetData.records.filter(r => r._archived === true);
+        const liveRecords     = fleetData.records.filter(r => !r._archived);
+        // _rowId für neue Records vergeben
+        incoming = incoming.map(r => r._rowId ? r : { ...r, _rowId: generateId() });
+        // Merge nur gegen aktive Records – archivierte werden NICHT berücksichtigt
+        const existingLiveVins = new Set(liveRecords.map(r => String(r.vin)));
+        const existingCount    = liveRecords.length;
+        const { merged, newColumns } = mergeRecords(liveRecords, incoming);
+        const newCount     = merged.length - existingCount;
         const updatedCount = incoming.length - newCount;
         const newVins = incoming
           .map(r => String(r.vin))
-          .filter(v => !existingVins.has(v));
-        const columns: ColumnDefinition[] = buildColumnDefs(merged);
+          .filter(v => !existingLiveVins.has(v));
+        const columns: ColumnDefinition[] = buildColumnDefs([...merged, ...archivedRecords]);
         const session: ImportSession = {
           id: generateId(),
           fileName,
@@ -219,10 +227,12 @@ export const useFleetStore = create<FleetStore>()(
           recordCount: incoming.length,
           newColumns,
         };
+        // Archivierte Records unverändert wieder anhängen
+        const allRecords = [...merged, ...archivedRecords];
         set({
           fleetData: {
             columns,
-            records: merged,
+            records: allRecords,
             importHistory: [session, ...fleetData.importHistory],
           },
         });
@@ -258,6 +268,7 @@ export const useFleetStore = create<FleetStore>()(
 
       // ── Manuell Fahrzeug anlegen ───────────────────────────────
       addVehicle: (vehicle) => {
+        if (!vehicle._rowId) vehicle = { ...vehicle, _rowId: generateId() };
         set(s => {
           const existing = s.fleetData.records.find(r => r.vin === vehicle.vin);
           if (existing) return s; // VIN already exists
@@ -287,17 +298,22 @@ export const useFleetStore = create<FleetStore>()(
         }));
       },
 
-      archiveMultiple: (vins, byUserName) => {
+      archiveMultiple: (_vins, byUserName, rowIds?: string[]) => {
         const now = new Date().toISOString();
-        const vinSet = new Set(vins);
+        // Bevorzuge _rowId-basiertes Matching (keine VIN-Kollisionen)
+        const idSet = rowIds ? new Set(rowIds) : null;
+        const vinSet = new Set(_vins);
         set(s => ({
           fleetData: {
             ...s.fleetData,
-            records: s.fleetData.records.map(r =>
-              vinSet.has(r.vin)
+            records: s.fleetData.records.map(r => {
+              const match = idSet
+                ? (r._rowId ? idSet.has(r._rowId) : vinSet.has(r.vin))
+                : vinSet.has(r.vin);
+              return match
                 ? { ...r, _archived: true, _archivedAt: now, _archivedBy: byUserName }
-                : r
-            ),
+                : r;
+            }),
           },
         }));
       },
@@ -330,22 +346,32 @@ export const useFleetStore = create<FleetStore>()(
         }));
       },
 
-      // ── Endgültig löschen (nur aus Archiv) ────────────────────
-      permanentlyDelete: (vin) => {
+      // ── Endgültig löschen (nur Record – Docs werden in der Komponente gelöscht)
+      permanentlyDelete: (vin, rowId?: string) => {
         set(s => ({
           fleetData: {
             ...s.fleetData,
-            records: s.fleetData.records.filter(r => r.vin !== vin),
+            records: s.fleetData.records.filter(r =>
+              rowId
+                ? (r._rowId ? r._rowId !== rowId : r.vin !== vin)
+                : r.vin !== vin
+            ),
           },
         }));
       },
 
-      permanentlyDeleteMultiple: (vins) => {
-        const vinSet = new Set(vins);
+      permanentlyDeleteMultiple: (_vins, rowIds?: string[]) => {
+        const idSet  = rowIds ? new Set(rowIds) : null;
+        const vinSet = new Set(_vins);
         set(s => ({
           fleetData: {
             ...s.fleetData,
-            records: s.fleetData.records.filter(r => !vinSet.has(r.vin)),
+            records: s.fleetData.records.filter(r => {
+              const shouldDelete = idSet
+                ? (r._rowId ? idSet.has(r._rowId) : vinSet.has(r.vin))
+                : vinSet.has(r.vin);
+              return !shouldDelete;
+            }),
           },
         }));
       },
@@ -367,7 +393,7 @@ interface DocsStore {
   documents: VehicleDocument[];
   addDocument: (doc: VehicleDocument) => void;
   deleteDocument: (id: string) => Promise<void>;
-  getVehicleDocs: (vin: string) => VehicleDocument[];
+  getVehicleDocs: (vin: string, rowId?: string) => VehicleDocument[];
 }
 
 export const useDocsStore = create<DocsStore>()(
@@ -382,7 +408,20 @@ export const useDocsStore = create<DocsStore>()(
         }
         set(s => ({ documents: s.documents.filter(d => d.id !== id) }));
       },
-      getVehicleDocs: (vin) => get().documents.filter(d => d.vehicleVin === vin),
+      getVehicleDocs: (vin, rowId?: string) => {
+        const docs = get().documents;
+        if (rowId) {
+          // Zeige:
+          // 1. Docs die explizit zu dieser rowId gehören (nach Fix hochgeladen)
+          // 2. Docs ohne vehicleRowId für diese VIN (alte/Bulk-Uploads ohne rowId)
+          return docs.filter(d =>
+            (d.vehicleRowId === rowId) ||
+            (!d.vehicleRowId && d.vehicleVin === vin)
+          );
+        }
+        // Kein rowId bekannt: alle Docs für diese VIN
+        return docs.filter(d => d.vehicleVin === vin);
+      },
     }),
     { name: 'fleet-docs' }
   )
@@ -480,6 +519,7 @@ const DEFAULT_PERM = (userId: string): UserDocPermission => ({
   canViewDocs: true,
   canImport: true,
   canBulkUpload: true,
+  visibleDocLabels: [],
   canViewDashboard: true,
   canEditDashboard: true,
   canOverrideDashboardLayout: true,
@@ -495,7 +535,7 @@ export const useDocPermStore = create<DocPermStore>()(
         // Admins und Editoren bekommen standardmäßig alles
         if (role === 'admin' || role === 'editor') return DEFAULT_PERM(userId);
         // Betrachter: nur ansehen, kein Upload/Löschen
-        return { userId, canUploadPdf: false, canUploadImage: false, canDeleteDocs: false, canViewDocs: true, canImport: false, canBulkUpload: false, canViewDashboard: true, canEditDashboard: false, canOverrideDashboardLayout: false };
+        return { userId, canUploadPdf: false, canUploadImage: false, canDeleteDocs: false, canViewDocs: true, canImport: false, canBulkUpload: false, visibleDocLabels: [], canViewDashboard: true, canEditDashboard: false, canOverrideDashboardLayout: false };
       },
       setPermission: (perm) => {
         const existing = get().permissions.find(p => p.userId === perm.userId);

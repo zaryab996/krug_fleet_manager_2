@@ -4,7 +4,7 @@ import {
   Shield, Users, Plus, Edit2, Trash2, Key, Check, X,
   AlertTriangle, Eye, Pencil, Crown, Palette, Columns,
   GripVertical, Save, RotateCcw, ChevronDown, ChevronUp,
-  Paperclip, FileText, ImageIcon, Lock, Unlock, Car, Search, Tags,
+  Paperclip, FileText, ImageIcon, Lock, Unlock, Car, Search, Tags, Folder,
   Mail, CheckCircle2, Copy, ExternalLink, Settings2, Upload, FolderUp,
   HardDrive, Filter, SortAsc, SortDesc, Database
 } from 'lucide-react';
@@ -129,13 +129,80 @@ function ColumnConfigEditor({ user, onClose }: ColumnConfigEditorProps) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Columns className="w-4 h-4 text-primary" />
-            Spalten für {user.name}
+            Berechtigungen für {user.name}
           </DialogTitle>
           <DialogDescription>
-            Wählen Sie die sichtbaren Spalten aus und legen Sie ihre Reihenfolge per Drag & Drop fest.
-            Diese Einstellung gilt für <strong>{user.name}</strong> ({user.email}).
+            Felder in Fahrzeugdaten und sichtbare Dokument-Typen für <strong>{user.name}</strong> ({user.email}) festlegen.
           </DialogDescription>
         </DialogHeader>
+
+        {/* ── Dokument-Typen Freigabe ── */}
+        {(() => {
+          const DOC_TYPES = ['Kalkulation','Prüfgutachten','Restwert','Rechnung','Ankauf','Verkauf'];
+          const perm = getPermission(user.id, user.role);
+          // allowed leer = alle frei; sonst nur diese Typen sichtbar
+          const allowed: string[] = perm.visibleDocLabels ?? [];
+          const allFree = allowed.length === 0;
+
+          const toggle = (docType: string) => {
+            if (user.role === 'admin') return;
+            if (allFree) {
+              // Alle waren frei → alle außer diesem explizit freigeben
+              setPermission({ ...perm, visibleDocLabels: DOC_TYPES.filter(d => d !== docType) });
+            } else {
+              const isOn = allowed.includes(docType);
+              const next = isOn ? allowed.filter(l => l !== docType) : [...allowed, docType];
+              // Alle aktiv → wieder leer (= alle frei)
+              setPermission({ ...perm, visibleDocLabels: DOC_TYPES.every(d => next.includes(d)) ? [] : next });
+            }
+          };
+
+          return (
+            <div className="border border-border rounded-xl p-4 bg-muted/20 shrink-0">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-semibold flex items-center gap-1.5">
+                  <Paperclip className="w-3.5 h-3.5 text-primary" /> Dokument-Freigabe
+                </p>
+                {!allFree && user.role !== 'admin' && (
+                  <button onClick={() => setPermission({ ...perm, visibleDocLabels: [] })}
+                    className="text-[11px] text-muted-foreground hover:text-primary underline">
+                    Alle freigeben
+                  </button>
+                )}
+              </div>
+              {user.role === 'admin' ? (
+                <p className="text-[11px] text-green-600 font-medium">✓ Admin sieht immer alle Dokumente</p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-3 gap-2">
+                    {DOC_TYPES.map(docType => {
+                      const isOn = allFree || allowed.includes(docType);
+                      return (
+                        <button key={docType} onClick={() => toggle(docType)}
+                          title={`Dokumente die „${docType}" im Namen enthalten`}
+                          className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 transition-all text-xs font-semibold
+                            ${isOn
+                              ? 'border-primary bg-primary/10 text-primary'
+                              : 'border-border bg-background text-muted-foreground opacity-40'}
+                            cursor-pointer hover:opacity-90`}>
+                          <FileText className={`w-5 h-5 ${isOn ? 'text-primary' : 'text-muted-foreground'}`} />
+                          {docType}
+                          <span className={`text-[10px] font-normal ${isOn ? 'text-green-600' : 'text-red-400'}`}>
+                            {isOn ? '✓ freigegeben' : '✗ gesperrt'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-2">
+                    Treffer: Dokument-Label enthält den Begriff (Groß-/Kleinschreibung egal).
+                    {allFree ? ' Aktuell alle Typen freigegeben.' : ` Freigegeben: ${allowed.join(', ')}.`}
+                  </p>
+                </>
+              )}
+            </div>
+          );
+        })()}
 
         {allColumns.length === 0 ? (
           <div className="py-12 text-center text-muted-foreground text-sm">
@@ -755,8 +822,9 @@ export default function AdminPage() {
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" onClick={() => setColConfigUser(user)} title="Spalten konfigurieren">
                           <Columns className="w-3.5 h-3.5" />
                         </Button>
-                        {!isAdmin && (
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => setDeletingUser(user)} title={t('admin.deleteTooltip')}>
+                        {/* Löschen: erlaubt für alle außer admin-1 und sich selbst */}
+                        {!isAdmin && !isCurrentUser && (
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => setDeletingUser(user)} title="Benutzer löschen">
                             <Trash2 className="w-3.5 h-3.5" />
                           </Button>
                         )}
@@ -1571,13 +1639,188 @@ export default function AdminPage() {
                       </span>
                     )}
                     {!isAdmin && (
-                      <div className="flex items-center gap-3">
-                        <ToggleBtn field="canUploadPdf"   icon={FileText}  activeColor="bg-red-100 text-red-600"       label={t('admin.docPerms.canUploadPdf')}    />
-                        <ToggleBtn field="canUploadImage" icon={ImageIcon} activeColor="bg-blue-100 text-blue-600"     label={t('admin.docPerms.canUploadImage')}  />
-                        <ToggleBtn field="canViewDocs"    icon={Eye}       activeColor="bg-green-100 text-green-600"   label={t('admin.docPerms.canViewDocs')}     />
-                        <ToggleBtn field="canDeleteDocs"  icon={Trash2}    activeColor="bg-orange-100 text-orange-600" label={t('admin.docPerms.canDeleteDocs')}   />
-                        <ToggleBtn field="canImport"      icon={Upload}    activeColor="bg-violet-100 text-violet-600" label={t('admin.docPerms.canImport')}       />
-                        <ToggleBtn field="canBulkUpload"  icon={FolderUp}  activeColor="bg-amber-100 text-amber-600"   label={t('admin.docPerms.canBulkUpload')}   />
+                      <div className="flex flex-col gap-3 w-full">
+                        {/* Aktions-Rechte */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <ToggleBtn field="canViewDocs"    icon={Eye}       activeColor="bg-green-100 text-green-600"   label={t('admin.docPerms.canViewDocs')}    />
+                          <ToggleBtn field="canUploadPdf"   icon={FileText}  activeColor="bg-red-100 text-red-600"       label={t('admin.docPerms.canUploadPdf')}   />
+                          <ToggleBtn field="canUploadImage" icon={ImageIcon} activeColor="bg-blue-100 text-blue-600"     label={t('admin.docPerms.canUploadImage')} />
+                          <ToggleBtn field="canDeleteDocs"  icon={Trash2}    activeColor="bg-orange-100 text-orange-600" label={t('admin.docPerms.canDeleteDocs')}  />
+                          <ToggleBtn field="canImport"      icon={Upload}    activeColor="bg-violet-100 text-violet-600" label={t('admin.docPerms.canImport')}      />
+                          <ToggleBtn field="canBulkUpload"  icon={FolderUp}  activeColor="bg-amber-100 text-amber-600"   label={t('admin.docPerms.canBulkUpload')}  />
+                        </div>
+                        {/* Ordner-Freigabe */}
+                        <div>
+                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5 flex items-center gap-1">
+                            <Folder className="w-3 h-3" /> Sichtbare Dokument-Ordner
+                            {(perm.visibleDocLabels ?? []).length === 0 && (
+                              <span className="text-green-600 font-normal ml-1">· Alle freigegeben</span>
+                            )}
+                            {(perm.visibleDocLabels ?? []).length > 0 && (
+                              <button onClick={() => setPermission({ ...perm, visibleDocLabels: [] })}
+                                className="text-muted-foreground hover:text-primary underline ml-2">Alle freigeben</button>
+                            )}
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+
+                          {(() => {
+                            const allowed: string[] = perm.visibleDocLabels ?? [];
+                            const allFree = allowed.length === 0;
+                            const isOn = allFree || allowed.includes('Kalkulation');
+                            const toggleFolder = () => {
+                              if (allFree) {
+                                setPermission({ ...perm, visibleDocLabels: ['Kalkulation', 'Prüfgutachten', 'Restwert', 'Rechnung', 'Ankauf', 'Verkauf'].filter(d => d !== 'Kalkulation') });
+                              } else {
+                                const next = isOn ? allowed.filter(l => l !== 'Kalkulation') : [...allowed, 'Kalkulation'];
+                                setPermission({ ...perm, visibleDocLabels: ['Kalkulation', 'Prüfgutachten', 'Restwert', 'Rechnung', 'Ankauf', 'Verkauf'].every(d => next.includes(d)) ? [] : next });
+                              }
+                            };
+                            return (
+                              <button key="Kalkulation" onClick={toggleFolder}
+                                title="Ordner 'Kalkulation' freigeben/sperren"
+                                className={`flex flex-col items-center gap-1 px-3 py-2 rounded-xl border-2 transition-all text-[11px] font-semibold
+                                  ${isOn ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background text-muted-foreground opacity-40'}
+                                  cursor-pointer hover:opacity-90`}>
+                                <Folder className="w-4 h-4" />
+                                Kalkulation
+                                <span className={`text-[10px] font-normal ${isOn ? 'text-green-600' : 'text-red-400'}`}>
+                                  {isOn ? '✓' : '✗'}
+                                </span>
+                              </button>
+                            );
+                          })()}
+                          {(() => {
+                            const allowed: string[] = perm.visibleDocLabels ?? [];
+                            const allFree = allowed.length === 0;
+                            const isOn = allFree || allowed.includes('Prüfgutachten');
+                            const toggleFolder = () => {
+                              if (allFree) {
+                                setPermission({ ...perm, visibleDocLabels: ['Kalkulation', 'Prüfgutachten', 'Restwert', 'Rechnung', 'Ankauf', 'Verkauf'].filter(d => d !== 'Prüfgutachten') });
+                              } else {
+                                const next = isOn ? allowed.filter(l => l !== 'Prüfgutachten') : [...allowed, 'Prüfgutachten'];
+                                setPermission({ ...perm, visibleDocLabels: ['Kalkulation', 'Prüfgutachten', 'Restwert', 'Rechnung', 'Ankauf', 'Verkauf'].every(d => next.includes(d)) ? [] : next });
+                              }
+                            };
+                            return (
+                              <button key="Prüfgutachten" onClick={toggleFolder}
+                                title="Ordner 'Prüfgutachten' freigeben/sperren"
+                                className={`flex flex-col items-center gap-1 px-3 py-2 rounded-xl border-2 transition-all text-[11px] font-semibold
+                                  ${isOn ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background text-muted-foreground opacity-40'}
+                                  cursor-pointer hover:opacity-90`}>
+                                <Folder className="w-4 h-4" />
+                                Prüfgutachten
+                                <span className={`text-[10px] font-normal ${isOn ? 'text-green-600' : 'text-red-400'}`}>
+                                  {isOn ? '✓' : '✗'}
+                                </span>
+                              </button>
+                            );
+                          })()}
+                          {(() => {
+                            const allowed: string[] = perm.visibleDocLabels ?? [];
+                            const allFree = allowed.length === 0;
+                            const isOn = allFree || allowed.includes('Restwert');
+                            const toggleFolder = () => {
+                              if (allFree) {
+                                setPermission({ ...perm, visibleDocLabels: ['Kalkulation', 'Prüfgutachten', 'Restwert', 'Rechnung', 'Ankauf', 'Verkauf'].filter(d => d !== 'Restwert') });
+                              } else {
+                                const next = isOn ? allowed.filter(l => l !== 'Restwert') : [...allowed, 'Restwert'];
+                                setPermission({ ...perm, visibleDocLabels: ['Kalkulation', 'Prüfgutachten', 'Restwert', 'Rechnung', 'Ankauf', 'Verkauf'].every(d => next.includes(d)) ? [] : next });
+                              }
+                            };
+                            return (
+                              <button key="Restwert" onClick={toggleFolder}
+                                title="Ordner 'Restwert' freigeben/sperren"
+                                className={`flex flex-col items-center gap-1 px-3 py-2 rounded-xl border-2 transition-all text-[11px] font-semibold
+                                  ${isOn ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background text-muted-foreground opacity-40'}
+                                  cursor-pointer hover:opacity-90`}>
+                                <Folder className="w-4 h-4" />
+                                Restwert
+                                <span className={`text-[10px] font-normal ${isOn ? 'text-green-600' : 'text-red-400'}`}>
+                                  {isOn ? '✓' : '✗'}
+                                </span>
+                              </button>
+                            );
+                          })()}
+                          {(() => {
+                            const allowed: string[] = perm.visibleDocLabels ?? [];
+                            const allFree = allowed.length === 0;
+                            const isOn = allFree || allowed.includes('Rechnung');
+                            const toggleFolder = () => {
+                              if (allFree) {
+                                setPermission({ ...perm, visibleDocLabels: ['Kalkulation', 'Prüfgutachten', 'Restwert', 'Rechnung', 'Ankauf', 'Verkauf'].filter(d => d !== 'Rechnung') });
+                              } else {
+                                const next = isOn ? allowed.filter(l => l !== 'Rechnung') : [...allowed, 'Rechnung'];
+                                setPermission({ ...perm, visibleDocLabels: ['Kalkulation', 'Prüfgutachten', 'Restwert', 'Rechnung', 'Ankauf', 'Verkauf'].every(d => next.includes(d)) ? [] : next });
+                              }
+                            };
+                            return (
+                              <button key="Rechnung" onClick={toggleFolder}
+                                title="Ordner 'Rechnung' freigeben/sperren"
+                                className={`flex flex-col items-center gap-1 px-3 py-2 rounded-xl border-2 transition-all text-[11px] font-semibold
+                                  ${isOn ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background text-muted-foreground opacity-40'}
+                                  cursor-pointer hover:opacity-90`}>
+                                <Folder className="w-4 h-4" />
+                                Rechnung
+                                <span className={`text-[10px] font-normal ${isOn ? 'text-green-600' : 'text-red-400'}`}>
+                                  {isOn ? '✓' : '✗'}
+                                </span>
+                              </button>
+                            );
+                          })()}
+                          {(() => {
+                            const allowed: string[] = perm.visibleDocLabels ?? [];
+                            const allFree = allowed.length === 0;
+                            const isOn = allFree || allowed.includes('Ankauf');
+                            const toggleFolder = () => {
+                              if (allFree) {
+                                setPermission({ ...perm, visibleDocLabels: ['Kalkulation', 'Prüfgutachten', 'Restwert', 'Rechnung', 'Ankauf', 'Verkauf'].filter(d => d !== 'Ankauf') });
+                              } else {
+                                const next = isOn ? allowed.filter(l => l !== 'Ankauf') : [...allowed, 'Ankauf'];
+                                setPermission({ ...perm, visibleDocLabels: ['Kalkulation', 'Prüfgutachten', 'Restwert', 'Rechnung', 'Ankauf', 'Verkauf'].every(d => next.includes(d)) ? [] : next });
+                              }
+                            };
+                            return (
+                              <button key="Ankauf" onClick={toggleFolder}
+                                title="Ordner 'Ankauf' freigeben/sperren"
+                                className={`flex flex-col items-center gap-1 px-3 py-2 rounded-xl border-2 transition-all text-[11px] font-semibold
+                                  ${isOn ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background text-muted-foreground opacity-40'}
+                                  cursor-pointer hover:opacity-90`}>
+                                <Folder className="w-4 h-4" />
+                                Ankauf
+                                <span className={`text-[10px] font-normal ${isOn ? 'text-green-600' : 'text-red-400'}`}>
+                                  {isOn ? '✓' : '✗'}
+                                </span>
+                              </button>
+                            );
+                          })()}
+                          {(() => {
+                            const allowed: string[] = perm.visibleDocLabels ?? [];
+                            const allFree = allowed.length === 0;
+                            const isOn = allFree || allowed.includes('Verkauf');
+                            const toggleFolder = () => {
+                              if (allFree) {
+                                setPermission({ ...perm, visibleDocLabels: ['Kalkulation', 'Prüfgutachten', 'Restwert', 'Rechnung', 'Ankauf', 'Verkauf'].filter(d => d !== 'Verkauf') });
+                              } else {
+                                const next = isOn ? allowed.filter(l => l !== 'Verkauf') : [...allowed, 'Verkauf'];
+                                setPermission({ ...perm, visibleDocLabels: ['Kalkulation', 'Prüfgutachten', 'Restwert', 'Rechnung', 'Ankauf', 'Verkauf'].every(d => next.includes(d)) ? [] : next });
+                              }
+                            };
+                            return (
+                              <button key="Verkauf" onClick={toggleFolder}
+                                title="Ordner 'Verkauf' freigeben/sperren"
+                                className={`flex flex-col items-center gap-1 px-3 py-2 rounded-xl border-2 transition-all text-[11px] font-semibold
+                                  ${isOn ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background text-muted-foreground opacity-40'}
+                                  cursor-pointer hover:opacity-90`}>
+                                <Folder className="w-4 h-4" />
+                                Verkauf
+                                <span className={`text-[10px] font-normal ${isOn ? 'text-green-600' : 'text-red-400'}`}>
+                                  {isOn ? '✓' : '✗'}
+                                </span>
+                              </button>
+                            );
+                          })()}
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>
