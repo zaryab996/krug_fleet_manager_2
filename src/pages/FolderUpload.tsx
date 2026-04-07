@@ -216,6 +216,7 @@ export default function FolderUploadPage() {
           const mimeType = file.type || mimeFromExt[ext] || 'application/octet-stream';
           const fileType: DocumentFileType = mimeType.startsWith('image/') ? 'image' : 'pdf';
 
+          console.log('[FolderUpload] saving file', { name: file.name, size: file.size, mimeType, docId });
           await saveFile(docId, buffer);
 
           // vehicleRowId aus dem Fahrzeug-Record – damit getVehicleDocs (strict) funktioniert

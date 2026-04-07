@@ -285,6 +285,7 @@ function UploadDialog({ vin, vehicleRowId, open, onClose, canUploadPdf, canUploa
         const q = queue[i];
         const id = generateId();
         const label = q.label.trim() || q.file.name.replace(/\.[^.]+$/, '');
+        console.log('[UploadDialog] saving file', { name: q.file.name, size: q.file.size, type: q.file.type, id });
         await saveFile(id, await q.file.arrayBuffer());
         addDocument({
           id, vehicleVin: vin,
