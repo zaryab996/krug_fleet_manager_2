@@ -126,7 +126,6 @@ export async function generateAndSaveVehicleQR(vin: string): Promise<QRSaveResul
   const fileName  = `qr-${vin}.png`;
   const storageKey = docId;
 
-  console.log('[QR] saving generated QR', { vin, storageKey, size: buffer.byteLength });
   await saveFile(storageKey, buffer);
 
   const document: VehicleDocument = {
